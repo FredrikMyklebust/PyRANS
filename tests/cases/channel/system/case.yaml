@@ -1,0 +1,29 @@
+mesh:
+  type: structured
+  nx: 12
+  ny: 6
+  lengths: [6.0, 1.0]
+  patches:
+    xmin: inlet
+    xmax: outlet
+    ymin: top
+    ymax: bottom
+Coupling: SIMPLE
+SIMPLE:
+  alphaU: 0.6
+  alphaP: 0.2
+  maxOuter: 60
+  minOuter: 20
+  tolU: 5.0e-8
+  tolP: 5.0e-8
+  tolMass: 1.0e-10
+  betaPhi: 0.3
+relaxation:
+  U: 0.6
+  p: 0.2
+convergence:
+  U: 5.0e-7
+  p: 5.0e-7
+  maxIters: 30
+time:
+  mode: steady

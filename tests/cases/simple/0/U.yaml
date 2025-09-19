@@ -1,0 +1,14 @@
+internalField:
+  uniform: [0.0, 0.0, 0.0]
+boundaryField:
+  inlet:
+    type: velocityInlet
+    value: [1.0, 0.0, 0.0]
+  outlet:
+    type: velocityInlet
+    value: [1.0, 0.0, 0.0]
+  bottom:
+    type: noSlip
+  top:
+    type: movingWall
+    value: [1.0, 0.0, 0.0]

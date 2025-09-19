@@ -1,0 +1,15 @@
+internalField:
+  uniform: 0.0
+boundaryField:
+  inlet:
+    type: pressureOutlet
+    value: 0.0
+  outlet:
+    type: pressureOutlet
+    value: 0.0
+  bottom:
+    type: pressureOutlet
+    value: 0.0
+  top:
+    type: pressureOutlet
+    value: 0.0

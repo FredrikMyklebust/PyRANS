@@ -1,0 +1,11 @@
+internalField:
+  uniform: 0.0
+boundaryField:
+  left:
+    type: zeroGradient
+  right:
+    type: zeroGradient
+  bottom:
+    type: zeroGradient
+  top:
+    type: zeroGradient

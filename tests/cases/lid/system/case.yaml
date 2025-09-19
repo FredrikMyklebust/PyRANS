@@ -1,0 +1,36 @@
+Coupling: SIMPLE
+SIMPLE:
+  alphaP: 0.3
+  alphaU: 0.3
+  betaPhi: 1.0
+  maxOuter: 60
+  minOuter: 20
+  tolMass: 1.0e-10
+  tolP: 1.0e-08
+  tolU: 1.0e-08
+convergence:
+  U: 1.0e-06
+  maxIters: 60
+  p: 1.0e-06
+mesh:
+  lengths:
+  - 1.0
+  - 1.0
+  nx: 32
+  ny: 32
+  patches:
+    xmax: right
+    xmin: left
+    ymax: bottom
+    ymin: top
+  type: structured
+pressureReference:
+  cell:
+  - 0
+  - 0
+  value: 0.0
+relaxation:
+  U: 0.7
+  p: 0.3
+time:
+  mode: steady
