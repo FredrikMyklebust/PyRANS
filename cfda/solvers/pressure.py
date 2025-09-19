@@ -9,6 +9,7 @@ import numpy as np
 
 from ..core import Mesh, ScalarField
 from ..core import fv_ops
+from ..core.fv_ops import grad
 from ..core.linalg import FvMatrix
 
 
@@ -17,6 +18,7 @@ class PressureSystem:
     matrix: FvMatrix
     rhs: np.ndarray
     mass_flux: np.ndarray
+    rAUf: np.ndarray
 
 
 class PressureAssembler:
@@ -54,6 +56,8 @@ class PressureAssembler:
         for bc in self.pressure_bcs:
             bc.update_face_values(face_pressure, pressure)
 
+        grad_p = grad(mesh, pressure, self.pressure_bcs)
+
         for fid, face in enumerate(mesh.faces):
             owner = face.owner
             neigh = face.neighbour
@@ -83,6 +87,14 @@ class PressureAssembler:
             diag[neigh] += coeff
             matrix.add_nb([owner], [neigh], [-coeff])
             matrix.add_nb([neigh], [owner], [-coeff])
+
+            # Non-orthogonal correction source term (vanishes on orthogonal meshes)
+            non_orth_vec = face.area_vector - n_hat * projection
+            if np.linalg.norm(non_orth_vec) > 0.0:
+                grad_face = 0.5 * (grad_p[owner] + grad_p[neigh])
+                correction = coeff_scale * float(np.dot(non_orth_vec, grad_face))
+                rhs[owner] -= correction
+                rhs[neigh] += correction
         matrix.add_diag(range(mesh.ncells), diag)
 
         for bc in self.pressure_bcs:
@@ -91,7 +103,7 @@ class PressureAssembler:
         if self.reference is not None:
             self._apply_reference(matrix, rhs, self.reference[0], self.reference[1])
 
-        return PressureSystem(matrix=matrix, rhs=rhs, mass_flux=face_flux)
+        return PressureSystem(matrix=matrix, rhs=rhs, mass_flux=face_flux, rAUf=rAUf if rAUf is not None else np.ones(len(mesh.faces)))
 
     def _apply_reference(self, matrix: FvMatrix, rhs: np.ndarray, cell: int, value: float) -> None:
         # Zero contributions from cell row

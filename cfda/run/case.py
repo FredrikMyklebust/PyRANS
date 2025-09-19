@@ -30,6 +30,7 @@ VELOCITY_BCS = {
     "noslip": NoSlipWall,
     "movingwall": MovingWall,
     "velocityinlet": VelocityInlet,
+    "zerogradient": ZeroGradient,
 }
 
 PRESSURE_BCS = {

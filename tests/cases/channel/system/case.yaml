@@ -12,12 +12,15 @@ Coupling: SIMPLE
 SIMPLE:
   alphaU: 0.6
   alphaP: 0.2
-  maxOuter: 60
-  minOuter: 20
+  maxOuter: 6
+  minOuter: 1
+  nPressureCorrectors: 3
+  adaptiveAlphaP: false
   tolU: 5.0e-8
   tolP: 5.0e-8
   tolMass: 1.0e-10
   betaPhi: 0.3
+  solverP: bicgstab
 relaxation:
   U: 0.6
   p: 0.2

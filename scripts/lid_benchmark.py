@@ -137,6 +137,7 @@ class BenchmarkResult:
     v_L2: float
     v_Linf: float
     vortex_center: Tuple[float, float]
+    vortex_streamfunction: float
     sample_points: Dict[str, float]
 
     def to_dict(self) -> Dict[str, object]:
@@ -152,6 +153,7 @@ class BenchmarkResult:
             "v_L2": self.v_L2,
             "v_Linf": self.v_Linf,
             "vortex_center": self.vortex_center,
+            "vortex_streamfunction": self.vortex_streamfunction,
             "sample_points": self.sample_points,
         }
 
@@ -209,14 +211,41 @@ def interpolate_profile(x_numeric: np.ndarray, y_numeric: np.ndarray, x_ref: np.
     return np.interp(x_ref, x_numeric[order], y_numeric[order])
 
 
-def locate_primary_vortex(case: Case) -> Tuple[float, float]:
+def compute_streamfunction(case: Case) -> np.ndarray:
     nx, ny = case.mesh.shape
-    speeds = np.linalg.norm(case.U.values[:, :2], axis=1)
-    mask = np.array([len(case.mesh.cell_neighbors[i]) == 4 for i in range(case.mesh.ncells)])
-    speeds_masked = np.where(mask, speeds, np.inf)
-    index = int(np.argmin(speeds_masked))
-    x_c, y_c, _ = case.mesh.cell_centers[index]
-    return x_c, y_c
+    dx, dy = case.mesh.spacing
+
+    u = case.U.values[:, 0].reshape(ny, nx)
+    v = case.U.values[:, 1].reshape(ny, nx)
+
+    psi = np.zeros((ny, nx))
+
+    # integrate along bottom boundary using v = -dpsi/dx
+    for i in range(1, nx):
+        v_avg = 0.5 * (v[0, i] + v[0, i - 1])
+        psi[0, i] = psi[0, i - 1] - v_avg * dx
+
+    # integrate upward using u = dpsi/dy
+    for j in range(1, ny):
+        for i in range(nx):
+            u_avg = 0.5 * (u[j, i] + u[j - 1, i])
+            psi[j, i] = psi[j - 1, i] + u_avg * dy
+
+    # remove arbitrary constant shift to keep numbers moderate
+    psi -= float(psi.mean())
+    return psi
+
+
+def locate_primary_vortex(case: Case) -> Tuple[float, float, float]:
+    nx, ny = case.mesh.shape
+    psi = compute_streamfunction(case)
+    psi_interior = psi[1:-1, 1:-1]
+    j_rel, i_rel = np.unravel_index(np.argmin(psi_interior), psi_interior.shape)
+    i = i_rel + 1
+    j = j_rel + 1
+    centers = case.mesh.cell_centers.reshape((ny, nx, 3))
+    x_c, y_c, _ = centers[j, i]
+    return float(x_c), float(y_c), float(psi[j, i])
 
 
 def bulk_kinetic_energy(case: Case) -> float:
@@ -263,7 +292,7 @@ def run_simulation(Re: int, nx: int, alpha_u: float, alpha_p: float, min_outer: 
         v_l2 = np.linalg.norm(v_interp - v_ref) / (np.linalg.norm(v_ref) or 1.0)
         v_linf = float(np.max(np.abs(v_interp - v_ref)))
 
-        vortex_center = locate_primary_vortex(case)
+        vx, vy, psi_min = locate_primary_vortex(case)
         bulk_speed = 2.0 * bulk_kinetic_energy(case)
 
         samples = {
@@ -304,7 +333,8 @@ def run_simulation(Re: int, nx: int, alpha_u: float, alpha_p: float, min_outer: 
             u_Linf=u_linf,
             v_L2=float(v_l2),
             v_Linf=v_linf,
-            vortex_center=vortex_center,
+            vortex_center=(vx, vy),
+            vortex_streamfunction=psi_min,
             sample_points=samples,
         )
 

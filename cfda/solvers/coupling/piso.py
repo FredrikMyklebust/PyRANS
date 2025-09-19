@@ -18,7 +18,7 @@ class PISOCoupling(CouplingAgent):
         self.solver_u = cfg.get("solverU", "bicgstab")
         self.solver_u_tol = float(cfg.get("solverTolU", 1e-10))
         self.solver_u_maxiter = int(cfg.get("solverMaxIterU", 500))
-        self.solver_p = cfg.get("solverP", "bicgstab")
+        self.solver_p = cfg.get("solverP", "cg")
         self.solver_p_tol = float(cfg.get("solverTolP", 1e-10))
         self.solver_p_maxiter = int(cfg.get("solverMaxIterP", 500))
         self.cumulative_mass = 0.0
@@ -81,6 +81,8 @@ class PISOCoupling(CouplingAgent):
                 alpha_p=alpha_p,
                 rAUf=momentum.rAUf,
             )
+            if not np.shares_memory(pressure_system.rAUf, momentum.rAUf):
+                raise AssertionError("Pressure assembler did not preserve rAUf sharing (PISO)")
             print(
                 f"PISO corrector {corr+1}: rAUf checksum matrix path =",
                 float(np.sum(momentum.rAUf)),

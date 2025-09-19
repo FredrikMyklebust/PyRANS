@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 import numpy as np
+
+try:  # Optional dependency for multigrid pressure solves
+    import pyamg  # type: ignore
+except ImportError:  # pragma: no cover - optional path
+    pyamg = None
+
+try:
+    from scipy import sparse
+except ImportError as exc:  # pragma: no cover - SciPy is required for AMG path
+    sparse = None  # type: ignore
 
 from .mesh import Mesh
 
@@ -75,7 +85,10 @@ class FvMatrix:
         initial_guess: np.ndarray | None = None,
     ) -> np.ndarray | tuple[np.ndarray, dict[str, float]]:
         method = method.lower()
-        if method not in {"direct", "cg", "bicgstab"}:
+        amg_methods = {"amg", "gamg"}
+        iterative_methods = {"cg", "bicgstab"}
+        valid_methods = {"direct", *iterative_methods, *amg_methods}
+        if method not in valid_methods:
             raise NotImplementedError(f"Unknown solver method '{method}'")
 
         b = self._rhs if rhs is None else rhs
@@ -102,15 +115,52 @@ class FvMatrix:
             }
             return solution, stats
 
+        if method in amg_methods:
+            if pyamg is None or sparse is None:  # pragma: no cover - import guard
+                raise RuntimeError(
+                    "AMG solver requested but pyamg/scipy are not available."
+                )
+
+            A = self.to_csr()
+            ml = (
+                pyamg.ruge_stuben_solver(A)
+                if method == "gamg"
+                else pyamg.smoothed_aggregation_solver(A)
+            )
+            x0 = None if initial_guess is None else np.asarray(initial_guess, dtype=float)
+            residuals: List[float] = []
+            solution = ml.solve(b, x0=x0, tol=tol, maxiter=maxiter, residuals=residuals)
+
+            if residuals:
+                initial_res = float(residuals[0])
+                final_res = float(residuals[-1])
+            else:
+                initial_res = float(np.linalg.norm(b if x0 is None else b - self.matvec(x0)))
+                residual_vec = self.matvec(solution) - b
+                final_res = float(np.linalg.norm(residual_vec))
+
+            denom = initial_res if initial_res > 0.0 else float(np.linalg.norm(b)) or 1.0
+            stats = {
+                "initial": initial_res,
+                "final": final_res,
+                "relative": final_res / denom,
+                "iterations": float(len(residuals)) if residuals else float("nan"),
+            }
+            if return_stats:
+                return np.asarray(solution), stats
+            return np.asarray(solution)
+
         diag = self.diagonal()
         inv_diag = np.zeros_like(diag)
         mask = diag != 0.0
         inv_diag[mask] = 1.0 / diag[mask]
 
         if initial_guess is None:
-            x = np.zeros_like(b)
+            x0 = np.zeros_like(b)
         else:
-            x = np.asarray(initial_guess, dtype=float)
+            x0 = np.asarray(initial_guess, dtype=float)
+
+        x = x0.copy()
 
         residual = b - self.matvec(x)
         initial_res = float(np.linalg.norm(residual))
@@ -199,9 +249,40 @@ class FvMatrix:
             "relative": final_res / denom,
             "iterations": float(iteration),
         }
+        if method == "cg" and (
+            not np.isfinite(final_res)
+            or final_res > max(tol_abs, tol_rel) * 10.0
+        ):
+            return self.solve(
+                rhs=b,
+                method="bicgstab",
+                tol=tol,
+                maxiter=maxiter,
+                return_stats=return_stats,
+                initial_guess=initial_guess,
+            )
+
         if return_stats:
             return x, stats_data
         return x
+
+    def to_csr(self):  # pragma: no cover - exercised via AMG path
+        if sparse is None:
+            raise RuntimeError("SciPy is required for CSR conversion")
+        n = self.mesh.ncells
+        rows = []
+        cols = []
+        data = []
+        for i, val in enumerate(self._diag):
+            if val != 0.0:
+                rows.append(i)
+                cols.append(i)
+                data.append(val)
+        for (row, col), coeff in self._offdiag.items():
+            rows.append(row)
+            cols.append(col)
+            data.append(coeff)
+        return sparse.csr_matrix((data, (rows, cols)), shape=(n, n))
 
     def clear_rhs(self) -> None:
         self._rhs[:] = 0.0

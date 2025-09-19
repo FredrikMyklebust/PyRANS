@@ -2,14 +2,11 @@ internalField:
   uniform: 0.0
 boundaryField:
   inlet:
-    type: pressureOutlet
-    value: 1.0
+    type: zeroGradient
   outlet:
     type: pressureOutlet
     value: 0.0
   bottom:
-    type: pressureOutlet
-    value: 0.0
+    type: zeroGradient
   top:
-    type: pressureOutlet
-    value: 0.0
+    type: zeroGradient

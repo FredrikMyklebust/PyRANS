@@ -18,6 +18,9 @@ class SimpleCoupling(CouplingAgent):
         cfg = self.config
         self.alpha_u = float(cfg.get("alphaU", case.relaxation.get("U", 0.7)))
         self.alpha_p = float(cfg.get("alphaP", case.relaxation.get("p", 0.3)))
+        self.alpha_p_min = float(cfg.get("alphaPMin", 0.05))
+        self.adaptive_alpha_p = bool(cfg.get("adaptiveAlphaP", True))
+        self._alpha_p_dynamic = self.alpha_p
         self.max_outer = int(cfg.get("maxOuter", case.convergence.get("maxIters", 50)))
         self.min_outer = int(cfg.get("minOuter", 2))
         self.n_pressure = int(cfg.get("nPressureCorrectors", 1))
@@ -28,13 +31,14 @@ class SimpleCoupling(CouplingAgent):
         self.solver_u = cfg.get("solverU", "bicgstab")
         self.solver_u_tol = float(cfg.get("solverTolU", 1e-10))
         self.solver_u_maxiter = int(cfg.get("solverMaxIterU", 500))
-        self.solver_p = cfg.get("solverP", "bicgstab")
+        self.solver_p = cfg.get("solverP", "cg")
         self.solver_p_tol = float(cfg.get("solverTolP", 1e-10))
         self.solver_p_maxiter = int(cfg.get("solverMaxIterP", 500))
         self.residual_control = case.residual_control
         self.cumulative_mass = 0.0
         self.initial_abs = {}
         self.beta_phi_base = float(cfg.get("betaPhi", 0.7))
+        self._prev_mass_norm: float | None = None
 
     def solve_step(self, case) -> None:
         mesh = case.mesh
@@ -81,7 +85,9 @@ class SimpleCoupling(CouplingAgent):
             n_corr = max(1, self.n_pressure + self.n_nonorth)
             alpha_sequence = [1.0] * n_corr
             if self.n_pressure > 0:
-                alpha_sequence[-1] = self.alpha_p
+                alpha_sequence[-1] = (
+                    self._alpha_p_dynamic if self.adaptive_alpha_p else self.alpha_p
+                )
             corr_masses: list[float] = []
             has_dirichlet = any(
                 bc.is_dirichlet() for bc in case.pressure_assembler.pressure_bcs
@@ -112,14 +118,19 @@ class SimpleCoupling(CouplingAgent):
             centers = mesh.cell_centers
             converged_outer = False
 
-            for corr_idx, alpha_p in enumerate(alpha_sequence, start=1):
+            for corr_idx, alpha_iter in enumerate(alpha_sequence, start=1):
                 pressure_system = case.pressure_assembler.build(
                     phi,
                     pressure=case.p,
                     rho=rho,
-                    alpha_p=alpha_p,
+                    alpha_p=alpha_iter,
                     rAUf=momentum.rAUf,
                 )
+
+                if not np.shares_memory(pressure_system.rAUf, momentum.rAUf):
+                    raise AssertionError(
+                        "Pressure assembler did not receive shared rAUf array"
+                    )
 
                 print(
                     f"corrector {corr_idx}: rAUf checksum matrix path =",
@@ -135,7 +146,7 @@ class SimpleCoupling(CouplingAgent):
                     maxiter=self.solver_p_maxiter,
                 )
 
-                case.p.values += alpha_p * p_corr
+                case.p.values += alpha_iter * p_corr
                 p_initial = max(p_initial, p_stats["initial"])
                 p_final = max(p_final, p_stats["final"])
                 p_rel_res = max(p_rel_res, p_stats["relative"])
@@ -239,8 +250,15 @@ class SimpleCoupling(CouplingAgent):
                         f"mass drop (corr #1): {mass_before:.3e} -> {corr_mass:.3e}"
                     )
 
+                no_flux_velocity = {
+                    bc.name
+                    for bc in case.momentum_assembler.velocity_bcs
+                    if bc.__class__.__name__.lower() in {"noslipwall", "movingwall"}
+                }
                 zero_flux_patches = {
-                    bc.name for bc in case.pressure_assembler.pressure_bcs if not bc.is_dirichlet()
+                    bc.name
+                    for bc in case.pressure_assembler.pressure_bcs
+                    if not bc.is_dirichlet() and bc.name in no_flux_velocity
                 }
                 for name in mesh.patches():
                     s = float(sum(phi[f] for f in mesh.patch_faces(name)))
@@ -254,6 +272,18 @@ class SimpleCoupling(CouplingAgent):
                 self.cumulative_mass += global_mass
                 mass_corr_last = corr_masses[-1]
                 mass_corr_max = max(corr_masses)
+
+                if self.adaptive_alpha_p:
+                    if self._prev_mass_norm is not None and mass_after > self._prev_mass_norm * 1.5:
+                        self._alpha_p_dynamic = max(
+                            self._alpha_p_dynamic * 0.5, self.alpha_p_min
+                        )
+                    elif mass_after < (self._prev_mass_norm or mass_after):
+                        self._alpha_p_dynamic = min(
+                            self._alpha_p_dynamic * 1.05, self.alpha_p
+                        )
+
+                self._prev_mass_norm = mass_after
 
                 case.turbulence_model.correct(case.U)
 
