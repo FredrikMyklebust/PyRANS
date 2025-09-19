@@ -84,8 +84,12 @@ class SimpleCoupling(CouplingAgent):
                 if self.profiling and tic is not None:
                     self.timings["momentum_solve"] += perf_counter() - tic
 
+            if self.profiling:
+                copy_start = perf_counter()
             phi_star = momentum.phi.copy()
             phi = phi_star.copy()
+            if self.profiling:
+                self.timings["array_copies"] += perf_counter() - copy_start
             mass_before = float(
                 np.sqrt(np.sum(volumes * fv_ops.div(mesh, phi) ** 2))
             )
@@ -131,6 +135,7 @@ class SimpleCoupling(CouplingAgent):
             converged_outer = False
 
             for corr_idx, alpha_iter in enumerate(alpha_sequence, start=1):
+                pressure_tic = perf_counter() if self.profiling else None
                 pressure_system = case.pressure_assembler.build(
                     phi,
                     pressure=case.p,
@@ -138,6 +143,8 @@ class SimpleCoupling(CouplingAgent):
                     alpha_p=alpha_iter,
                     rAUf=momentum.rAUf,
                 )
+                if self.profiling and pressure_tic is not None:
+                    self.timings["pressure_assembly"] += perf_counter() - pressure_tic
 
                 if not np.shares_memory(pressure_system.rAUf, momentum.rAUf):
                     raise AssertionError(
@@ -149,7 +156,12 @@ class SimpleCoupling(CouplingAgent):
                     float(np.sum(momentum.rAUf)),
                 )
 
+                if self.profiling:
+                    copy_start = perf_counter()
                 phi_prev = phi.copy()
+                if self.profiling:
+                    self.timings["array_copies"] += perf_counter() - copy_start
+                pressure_solve_tic = perf_counter() if self.profiling else None
                 p_corr, p_stats = pressure_system.matrix.solve(
                     pressure_system.rhs,
                     return_stats=True,
@@ -157,6 +169,8 @@ class SimpleCoupling(CouplingAgent):
                     tol=self.solver_p_tol,
                     maxiter=self.solver_p_maxiter,
                 )
+                if self.profiling and pressure_solve_tic is not None:
+                    self.timings["pressure_solve"] += perf_counter() - pressure_solve_tic
 
                 case.p.values += alpha_iter * p_corr
                 p_initial = max(p_initial, p_stats["initial"])
@@ -168,8 +182,11 @@ class SimpleCoupling(CouplingAgent):
                     p_corr,
                     case.pressure_assembler.pressure_bcs,
                 )
+                vel_tic = perf_counter() if self.profiling else None
                 for comp in range(3):
                     case.U.values[:, comp] -= momentum.rAU * grad_pcorr[:, comp]
+                if self.profiling and vel_tic is not None:
+                    self.timings["velocity_correction"] += perf_counter() - vel_tic
 
                 print(
                     f"corrector {corr_idx}: rAUf checksum flux path =",
@@ -255,6 +272,7 @@ class SimpleCoupling(CouplingAgent):
                 assert np.isfinite(case.U.values).all()
                 assert np.isfinite(case.p.values).all()
 
+                conv_tic = perf_counter() if self.profiling else None
                 div_phi_corr = fv_ops.div(mesh, phi)
                 corr_mass = float(np.sqrt(np.sum(volumes * div_phi_corr**2)))
                 corr_masses.append(corr_mass)
@@ -280,7 +298,7 @@ class SimpleCoupling(CouplingAgent):
                         assert abs(s) < 1e-12, f"boundary flux injected on patch {name}"
 
                 if self.profiling and flux_tic is not None:
-                    self.timings["flux_correction"] += perf_counter() - flux_tic
+                    self.timings["rhie_chow_rebuild"] += perf_counter() - flux_tic
 
                 div_phi = fv_ops.div(mesh, phi)
                 mass_after = float(np.sqrt(np.sum(volumes * div_phi**2)))
@@ -330,6 +348,8 @@ class SimpleCoupling(CouplingAgent):
                         "mass_corr_max": mass_corr_max,
                     },
                 )
+                if self.profiling and conv_tic is not None:
+                    self.timings["convergence_logging"] += perf_counter() - conv_tic
 
                 converged_outer = self._check_convergence(
                     u_rel_res, u_final, p_rel_res, p_final, mass_after
