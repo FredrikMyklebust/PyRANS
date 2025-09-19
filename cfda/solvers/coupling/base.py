@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import defaultdict
 
 from ...utils.registry import Registry
 
@@ -22,6 +23,18 @@ class CouplingAgent(ABC):
     def __init__(self, case, config=None) -> None:
         self.case = case
         self.config = config or {}
+        self.profiling = bool(self.config.get("profiling", False))
+        self.timings = defaultdict(float)
+
+    def enable_profiling(self, flag: bool = True) -> None:
+        self.profiling = flag
+        self.timings.clear()
+
+    def reset_timings(self) -> None:
+        self.timings.clear()
+
+    def get_timings(self) -> dict[str, float]:
+        return dict(self.timings)
 
     @abstractmethod
     def solve_step(self, case):

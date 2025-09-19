@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from time import perf_counter
 
 from ...core import fv_ops
 from ...core.fv_ops import grad
@@ -27,6 +28,9 @@ class PISOCoupling(CouplingAgent):
     def solve_step(self, case) -> None:
         mesh = case.mesh
         volumes = mesh.cell_volumes
+        if self.profiling:
+            self.reset_timings()
+            solve_start = perf_counter()
         momentum = case.momentum_assembler.build(
             velocity=case.U,
             pressure=case.p,
@@ -198,6 +202,8 @@ class PISOCoupling(CouplingAgent):
                 "mass_cumulative": self.cumulative_mass,
             },
         )
+        if self.profiling:
+            self.timings["total"] = perf_counter() - solve_start
 
     def _apply_flux_correction(
         self,

@@ -9,6 +9,7 @@ from ...core.fv_ops import grad
 from ..momentum import MomentumAssembler
 from ..pressure import PressureAssembler
 from .base import CouplingAgent, register_coupling
+from time import perf_counter
 
 
 @register_coupling("simple")
@@ -44,7 +45,13 @@ class SimpleCoupling(CouplingAgent):
         mesh = case.mesh
         volumes = case.mesh.cell_volumes
 
+        if self.profiling:
+            self.reset_timings()
+            solve_start = perf_counter()
+
         for outer in range(1, self.max_outer + 1):
+            outer_start = perf_counter() if self.profiling else None
+            tic = perf_counter() if self.profiling else None
             momentum = case.momentum_assembler.build(
                 velocity=case.U,
                 pressure=case.p,
@@ -53,12 +60,15 @@ class SimpleCoupling(CouplingAgent):
                 nut=case.turbulence_model.nut(),
                 alpha_u=self.alpha_u,
             )
+            if self.profiling and tic is not None:
+                self.timings["momentum_assembly"] += perf_counter() - tic
 
             u_rel_res = 0.0
             u_initial = 0.0
             u_final = 0.0
             for comp in range(3):
                 prev = case.U.values[:, comp].copy()
+                tic = perf_counter() if self.profiling else None
                 solution, stats = momentum.matrices[comp].solve(
                     momentum.rhs[:, comp],
                     return_stats=True,
@@ -71,6 +81,8 @@ class SimpleCoupling(CouplingAgent):
                 u_rel_res = max(u_rel_res, stats["relative"])
                 u_initial = max(u_initial, stats["initial"])
                 u_final = max(u_final, stats["final"])
+                if self.profiling and tic is not None:
+                    self.timings["momentum_solve"] += perf_counter() - tic
 
             phi_star = momentum.phi.copy()
             phi = phi_star.copy()
@@ -164,6 +176,7 @@ class SimpleCoupling(CouplingAgent):
                     float(np.sum(momentum.rAUf)),
                 )
 
+                flux_tic = perf_counter() if self.profiling else None
                 delta_phi = np.zeros_like(phi)
                 for fid, face in enumerate(mesh.faces):
                     neigh = face.neighbour
@@ -266,6 +279,9 @@ class SimpleCoupling(CouplingAgent):
                     if name in zero_flux_patches:
                         assert abs(s) < 1e-12, f"boundary flux injected on patch {name}"
 
+                if self.profiling and flux_tic is not None:
+                    self.timings["flux_correction"] += perf_counter() - flux_tic
+
                 div_phi = fv_ops.div(mesh, phi)
                 mass_after = float(np.sqrt(np.sum(volumes * div_phi**2)))
                 global_mass = float(np.sum(phi))
@@ -285,7 +301,10 @@ class SimpleCoupling(CouplingAgent):
 
                 self._prev_mass_norm = mass_after
 
+                turb_tic = perf_counter() if self.profiling else None
                 case.turbulence_model.correct(case.U)
+                if self.profiling and turb_tic is not None:
+                    self.timings["turbulence_correct"] += perf_counter() - turb_tic
 
                 if outer == 1:
                     self.initial_abs = {
@@ -318,8 +337,12 @@ class SimpleCoupling(CouplingAgent):
                 if outer >= self.min_outer and converged_outer:
                     break
 
-            if outer >= self.min_outer and converged_outer:
-                break
+            if self.profiling and outer_start is not None:
+                self.timings["outer_loop"] += perf_counter() - outer_start
+
+        if self.profiling:
+            self.timings["outer_iterations"] = outer
+            self.timings["total"] = perf_counter() - solve_start
 
     def _check_convergence(self, u_rel, u_final, p_rel, p_final, mass_norm):
         rc = self.residual_control

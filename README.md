@@ -97,6 +97,19 @@ PY
 - The benchmark/validation scripts automatically drop PNGs/JSON summaries in
   this directory; copy them out if you need to keep snapshots.
 
+### Profiling the case loop
+
+```
+python scripts/profile_cases.py \
+    --case tests/cases/lid/system/case.yaml \
+    --case tests/cases/channel/system/case.yaml
+```
+
+The profiler enables timing hooks inside the SIMPLE (and coarse totals for
+PISO/PIMPLE) coupling loops, printing a breakdown (momentum assembly, linear
+solves, pressure correctors, etc.) and writing the raw numbers to
+`tests/artifacts/profiling_results.json`.
+
 ## Contributing
 
 1. Run `pytest -q` before sending changes.

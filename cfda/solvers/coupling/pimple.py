@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from time import perf_counter
 
 from ...core import fv_ops
 from ...core.fv_ops import grad
@@ -33,6 +34,9 @@ class PimpleCoupling(CouplingAgent):
     def solve_step(self, case) -> None:
         mesh = case.mesh
         volumes = mesh.cell_volumes
+        if self.profiling:
+            self.reset_timings()
+            solve_start = perf_counter()
         for outer in range(self.n_outer):
             U_old = case.U.values.copy()
             momentum = case.momentum_assembler.build(
@@ -156,6 +160,8 @@ class PimpleCoupling(CouplingAgent):
             )
             if self._check_convergence(u_rel_res, u_final, p_rel_res, p_final, mass_after):
                 break
+        if self.profiling:
+            self.timings["total"] = perf_counter() - solve_start
 
     def _apply_flux_correction(
         self,
